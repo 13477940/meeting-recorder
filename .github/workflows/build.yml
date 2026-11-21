@@ -81,6 +81,19 @@ jobs:
         run: |
           Get-Command cmake, clang -ErrorAction SilentlyContinue | Format-Table Name, Source
           Test-Path $env:LIBCLANG_PATH
+      # whisper.cpp 的 ggml 在 ARM64 不支援 MSVC：ARM64 改用 Ninja＋clang-cl（MSVC 環境變數由 VsDevCmd 提供）
+      - if: matrix.arch == 'arm64'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: arm64
+      - if: matrix.arch == 'arm64'
+        name: 設定 clang-cl＋Ninja
+        shell: pwsh
+        run: |
+          "CMAKE_GENERATOR=Ninja" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          "CC=clang-cl" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          "CXX=clang-cl" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          Get-Command ninja, clang-cl -ErrorAction SilentlyContinue | Format-Table Name, Source
       - uses: Swatinem/rust-cache@v2
         with:
           key: windows-${{ matrix.arch }}
