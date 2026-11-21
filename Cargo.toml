@@ -1,0 +1,29 @@
+[package]
+name = "meeting-recorder"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.100"
+description = "會議錄影、錄音與逐字稿（macOS Apple Silicon）"
+
+[dependencies]
+screencapturekit = { version = "11.1.2", features = ["macos_15_0"] }
+objc2 = "0.6.5"
+objc2-foundation = { version = "0.3.2", features = ["NSString", "NSDictionary", "NSValue", "NSURL", "NSError", "NSArray", "NSTimer", "NSDate", "NSRunLoop", "NSObject", "NSThread", "NSGeometry", "block2"] }
+objc2-core-media = { version = "0.3.2", features = ["CMSampleBuffer", "CMTime", "CMBase", "CMFormatDescription", "CMBlockBuffer", "CMSync"] }
+objc2-core-foundation = "0.3.2"
+objc2-av-foundation = { version = "0.3.2", features = ["AVAssetWriter", "AVAssetWriterInput", "AVMediaFormat", "AVVideoSettings", "AVAssetReader", "AVAssetReaderOutput", "AVAsset", "AVAssetTrack", "AVAudioMix", "objc2-core-media", "block2"] }
+objc2-avf-audio = { version = "0.3.2", features = ["AVAudioSettings"] }
+block2 = "0.6"
+ctrlc = "3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+chrono = "0.4"
+libc = "0.2"
+whisper-rs = { version = "0.16.0", features = ["metal"] }
+ferrous-opencc = "0.4.0"
+reqwest = { version = "0.13.5", default-features = false, features = ["blocking", "json", "native-tls", "http2"] }
+security-framework = "3.7.0"
+toml = "1.2.2"
+sha2 = "0.11.1"
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSApplication", "NSStatusBar", "NSStatusItem", "NSStatusBarButton", "NSMenu", "NSMenuItem", "NSAlert", "NSTextField", "NSSecureTextField", "NSWorkspace", "NSOpenPanel", "NSSavePanel", "NSButton", "NSControl", "NSView", "NSResponder", "NSWindow", "NSPanel", "NSRunningApplication", "NSCell", "NSImage", "NSFont", "NSText", "NSButtonCell", "NSActionCell", "NSTextFieldCell", "NSGraphics", "NSColor", "NSUserInterfaceItemIdentification", "NSAccessibilityProtocols", "NSMenuItemCell", "NSAppearance", "block2", "objc2-core-foundation"] }

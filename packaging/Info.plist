@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleIdentifier</key><string>io.github.13477940.MeetingRecorder</string>
+  <key>CFBundleName</key><string>MeetingRecorder</string>
+  <key>CFBundleDisplayName</key><string>會議錄影</string>
+  <key>CFBundleExecutable</key><string>meeting-recorder</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleShortVersionString</key><string>__VERSION__</string>
+  <key>CFBundleVersion</key><string>__VERSION__</string>
+  <key>LSMinimumSystemVersion</key><string>15.0</string>
+  <key>LSUIElement</key><true/>
+  <key>NSHighResolutionCapable</key><true/>
+  <key>NSMicrophoneUsageDescription</key><string>錄製會議時收錄麥克風聲音。</string>
+  <key>NSScreenCaptureUsageDescription</key><string>錄製會議畫面與系統聲音。</string>
+</dict>
+</plist>
