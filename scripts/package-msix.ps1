@@ -3,7 +3,7 @@
 #
 # 側載測試（自簽憑證）：
 #   ./scripts/package-msix.ps1 -SelfSign
-#   會產生 dist\MeetingRecorder_<版本>_x64.msix 與 dist\MeetingRecorder-test.cer；
+#   會產生 dist\MeetingRecorder_<版本>_<架構>.msix 與 dist\MeetingRecorder-test-<架構>.cer；
 #   先把 .cer 匯入「本機電腦\受信任的人」，再雙擊 .msix 安裝。
 # 上架 Microsoft Store：
 #   ./scripts/package-msix.ps1 -Name "<Partner Center 的 Package/Identity/Name>" -Publisher "<Package/Identity/Publisher>" -PublisherDisplay "<發行者顯示名稱>"
@@ -33,8 +33,9 @@ $msixVer = "$ver.0"
 $sdkBin = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Directory |
   Where-Object { $_.Name -match '^10\.' } | Sort-Object Name -Descending | Select-Object -First 1
 if (-not $sdkBin) { throw "找不到 Windows 10/11 SDK" }
-$makeappx = Join-Path $sdkBin.FullName "x64\makeappx.exe"
-$signtool = Join-Path $sdkBin.FullName "x64\signtool.exe"
+$hostArch = if ($env:PROCESSOR_ARCHITECTURE -eq "ARM64" -and (Test-Path (Join-Path $sdkBin.FullName "arm64\makeappx.exe"))) { "arm64" } else { "x64" }
+$makeappx = Join-Path $sdkBin.FullName "$hostArch\makeappx.exe"
+$signtool = Join-Path $sdkBin.FullName "$hostArch\signtool.exe"
 
 $stage = "target\msix-stage"
 Remove-Item $stage -Recurse -Force -ErrorAction SilentlyContinue
@@ -58,7 +59,7 @@ if ($SelfSign) {
     -CertStoreLocation "Cert:\CurrentUser\My" -TextExtension @("2.5.29.37={text}1.3.6.1.5.5.7.3.3", "2.5.29.19={text}")
   & $signtool sign /fd SHA256 /sha1 $cert.Thumbprint /s My $msix
   if ($LASTEXITCODE -ne 0) { throw "signtool 失敗" }
-  Export-Certificate -Cert $cert -FilePath "dist\MeetingRecorder-test.cer" | Out-Null
-  Write-Host "已用測試憑證簽章；安裝前先把 dist\MeetingRecorder-test.cer 匯入「本機電腦\受信任的人」"
+  Export-Certificate -Cert $cert -FilePath "dist\MeetingRecorder-test-$Arch.cer" | Out-Null
+  Write-Host "已用測試憑證簽章；安裝前先把 dist\MeetingRecorder-test-$Arch.cer 匯入「本機電腦\受信任的人」"
 }
 Write-Host "完成：$msix"

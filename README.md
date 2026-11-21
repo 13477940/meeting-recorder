@@ -17,7 +17,12 @@
 
 ## 下載
 
-到 [Releases](../../releases) 下載 `MeetingRecorder-macos.zip` 或 `.msix`；每次 push 到 main 會自動發一個預先發行版（`v<版本>-build.<編號>`），推 `v*` tag 則發正式版。
+到 [Releases](../../releases) 下載對應的安裝檔。每次 push 到 main 會自動發一個預先發行版（`v<版本>-build.<編號>`），推 `v*` tag 則發正式版。
+
+| 平台 | Apple Silicon／ARM | Intel／x64 |
+|---|---|---|
+| macOS | `MeetingRecorder-macos-arm64.zip` | `MeetingRecorder-macos-x86_64.zip` |
+| Windows | `MeetingRecorder_<版本>_arm64.msix` | `MeetingRecorder_<版本>_x64.msix` |
 
 ## 建置
 
@@ -26,17 +31,19 @@
 **macOS**（需要 Xcode Command Line Tools）
 
 ```bash
-./scripts/bundle.sh                               # dist/MeetingRecorder.app 與 dist/MeetingRecorder-macos.zip（ad-hoc 簽章）
+./scripts/bundle.sh                               # 本機架構：dist/MeetingRecorder.app 與 dist/MeetingRecorder-macos-<arch>.zip（ad-hoc 簽章）
+TARGET=x86_64-apple-darwin ./scripts/bundle.sh    # Intel 版（需要含 x86_64 的 SDK，例如 Xcode 26；macOS 27 SDK 已不含）
 SIGN_IDENTITY="<憑證名稱>" ./scripts/bundle.sh     # 用固定的程式碼簽章憑證，螢幕錄影權限不會因重編失效
 ```
 
 **Windows**（需要 Visual Studio C++ Build Tools、Windows 10/11 SDK、LLVM）
 
 ```powershell
-./scripts/package-msix.ps1 -SelfSign     # dist\MeetingRecorder_<版本>_x64.msix＋測試憑證 .cer
+./scripts/package-msix.ps1 -SelfSign              # x64：dist\MeetingRecorder_<版本>_x64.msix＋測試憑證
+./scripts/package-msix.ps1 -SelfSign -Arch arm64  # ARM64（whisper.cpp 需要 clang，建議在 ARM64 機器上編）
 ```
 
-側載安裝：先把 `MeetingRecorder-test.cer` 匯入「本機電腦 → 受信任的人」，再雙擊 `.msix`。
+側載安裝：先把 `MeetingRecorder-test-<架構>.cer` 匯入「本機電腦 → 受信任的人」，再雙擊 `.msix`。
 
 ### 上架 Microsoft Store
 

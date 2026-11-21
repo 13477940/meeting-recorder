@@ -15,37 +15,82 @@ permissions:
 
 jobs:
   macos:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            target: aarch64-apple-darwin
+          # Intel 版在 Apple Silicon runner 上交叉編譯（Xcode 26 仍含 x86_64 SDK）
+          - arch: x86_64
+            target: x86_64-apple-darwin
+    name: macos-${{ matrix.arch }}
     # screencapturekit 依賴的 apple-metal 需要 macOS 26 SDK（Xcode 26）
     runs-on: macos-26
     steps:
       - uses: actions/checkout@v7
-      - name: 安裝 rust-toolchain.toml 指定的 Rust
-        run: rustup show active-toolchain || rustup toolchain install
+      - name: 安裝 rust-toolchain.toml 指定的 Rust 與目標平台
+        run: |
+          rustup show active-toolchain || rustup toolchain install
+          rustup target add ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
-      - run: cargo test --release
+        with:
+          key: ${{ matrix.target }}
+      - name: 測試（只在原生架構）
+        if: matrix.arch == 'arm64'
+        run: cargo test --release
       - run: ./scripts/bundle.sh
+        env:
+          TARGET: ${{ matrix.target }}
       - uses: actions/upload-artifact@v7
         with:
-          name: MeetingRecorder-macos
-          path: dist/MeetingRecorder-macos.zip
+          name: MeetingRecorder-macos-${{ matrix.arch }}
+          path: dist/MeetingRecorder-macos-${{ matrix.arch }}.zip
 
   windows:
-    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: windows-latest
+          # ARM64 用原生 runner 編譯（whisper.cpp 在 ARM64 需要 clang）
+          - arch: arm64
+            runner: windows-11-arm
+    name: windows-${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
     env:
-      # whisper-rs-sys 的 bindgen 需要 libclang（runner 內建 LLVM）
+      # whisper-rs-sys 的 bindgen 需要 libclang
       LIBCLANG_PATH: C:\Program Files\LLVM\bin
     steps:
       - uses: actions/checkout@v7
+      - name: 安裝 Rust（runner 沒有內建時）
+        shell: pwsh
+        run: |
+          if (-not (Get-Command rustup -ErrorAction SilentlyContinue)) {
+            $init = if ($env:PROCESSOR_ARCHITECTURE -eq "ARM64") { "aarch64-pc-windows-msvc" } else { "x86_64-pc-windows-msvc" }
+            Invoke-WebRequest "https://static.rust-lang.org/rustup/dist/$init/rustup-init.exe" -OutFile rustup-init.exe
+            ./rustup-init.exe -y --default-toolchain none --profile minimal
+            "$env:USERPROFILE\.cargo\bin" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+          }
       - name: 安裝 rust-toolchain.toml 指定的 Rust
-        run: rustup show active-toolchain || rustup toolchain install
+        shell: pwsh
+        run: rustup show active-toolchain; if ($LASTEXITCODE -ne 0) { rustup toolchain install }
+      - name: 檢查建置工具
+        shell: pwsh
+        run: |
+          Get-Command cmake, clang -ErrorAction SilentlyContinue | Format-Table Name, Source
+          Test-Path $env:LIBCLANG_PATH
       - uses: Swatinem/rust-cache@v2
+        with:
+          key: windows-${{ matrix.arch }}
       - run: cargo test --release
       - name: 封裝 MSIX（測試用自簽憑證）
         shell: pwsh
-        run: ./scripts/package-msix.ps1 -SelfSign
+        run: ./scripts/package-msix.ps1 -SelfSign -Arch ${{ matrix.arch }}
       - uses: actions/upload-artifact@v7
         with:
-          name: MeetingRecorder-windows
+          name: MeetingRecorder-windows-${{ matrix.arch }}
           path: |
             dist/*.msix
             dist/*.cer
@@ -82,6 +127,11 @@ jobs:
           files: artifacts/*
           generate_release_notes: true
           body: |
-            - macOS：解壓 `MeetingRecorder-macos.zip` 後開啟 `MeetingRecorder.app`（未公證，第一次要在「系統設定 → 隱私權與安全性」允許開啟）。
-            - Windows：先把 `MeetingRecorder-test.cer` 匯入「本機電腦 → 受信任的人」，再雙擊 `.msix` 安裝。
+            | 平台 | Apple Silicon／ARM | Intel／x64 |
+            |---|---|---|
+            | macOS | `MeetingRecorder-macos-arm64.zip` | `MeetingRecorder-macos-x86_64.zip` |
+            | Windows | `MeetingRecorder_*_arm64.msix` | `MeetingRecorder_*_x64.msix` |
+
+            - macOS：解壓後開啟 `MeetingRecorder.app`（未公證，第一次要在「系統設定 → 隱私權與安全性」允許開啟）。
+            - Windows：先把 `MeetingRecorder-test-<架構>.cer` 匯入「本機電腦 → 受信任的人」，再雙擊 `.msix` 安裝。
             - 自動建置版本（build）尚未經實機驗證，僅供測試。
