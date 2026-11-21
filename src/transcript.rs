@@ -1,6 +1,6 @@
 //! 逐字稿資料結構、後處理（簡轉繁、誤辨對照）、輸出 md／srt／json。
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
@@ -28,9 +28,7 @@ pub struct Transcript {
     pub failed_chunks: Vec<f64>,
 }
 
-pub fn app_support() -> PathBuf {
-    PathBuf::from(std::env::var("HOME").unwrap_or_default()).join("Library/Application Support/MeetingRecorder")
-}
+pub use crate::common::app_support;
 
 const DEFAULT_GLOSSARY: &str = "\
 # 專案詞彙表：一行一個詞，會放進辨識提示，# 開頭為註解

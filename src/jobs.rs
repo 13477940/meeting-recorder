@@ -8,7 +8,7 @@ use anyhow::{Result, anyhow, bail};
 
 use crate::config::Config;
 use crate::transcript::{self, Transcript};
-use crate::{audio, gemini, local_asr, recorder, session};
+use crate::{audio, common, gemini, local_asr, session};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Engine {
@@ -21,7 +21,7 @@ pub fn resolve_input(input: &Path, out: Option<PathBuf>) -> Result<(PathBuf, Pat
     if input.is_dir() {
         let s = session::Session::load(input).ok();
         let file = s.as_ref().map(|s| s.recording_file.clone()).unwrap_or_else(|| "recording.mov".into());
-        let title = s.map(|s| s.name).filter(|n| !n.is_empty()).unwrap_or_else(|| recorder::dir_name(input));
+        let title = s.map(|s| s.name).filter(|n| !n.is_empty()).unwrap_or_else(|| common::dir_name(input));
         Ok((input.join(file), out.unwrap_or_else(|| input.to_path_buf()), title))
     } else if input.is_file() {
         let stem = input.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
@@ -108,5 +108,101 @@ pub fn recent_sessions(root: &Path, n: usize) -> Vec<PathBuf> {
     v.sort();
     v.reverse();
     v.truncate(n);
+    v
+}
+
+/// 選單列 App 的背景工作狀態（一次只跑一件）
+#[derive(Default)]
+pub struct Job {
+    /// 正在做什麼（None = 沒有工作）
+    pub running: Option<String>,
+    pub progress: String,
+    /// 工作結束後要顯示的訊息：(標題, 內容, 要開的資料夾)
+    pub notice: Option<(String, String, Option<PathBuf>)>,
+    pub cancel: Arc<AtomicBool>,
+}
+
+/// 在背景執行緒產生逐字稿；已有工作在跑就回傳 false
+pub fn spawn_transcribe(job: Arc<std::sync::Mutex<Job>>, dir: PathBuf, engine: Engine, retry: bool, cfg: Config) -> bool {
+    let cancel = Arc::new(AtomicBool::new(false));
+    {
+        let mut j = job.lock().unwrap();
+        if j.running.is_some() {
+            return false;
+        }
+        j.running = Some(format!("{}逐字稿", if engine == Engine::Local { "本機" } else { "Gemini " }));
+        j.progress = "準備中".into();
+        j.cancel = cancel.clone();
+    }
+    std::thread::spawn(move || {
+        let j2 = job.clone();
+        let res = transcribe(&dir, None, engine, retry, &cfg, cancel, move |p| {
+            j2.lock().unwrap().progress = p;
+        });
+        let mut j = job.lock().unwrap();
+        j.running = None;
+        j.notice = Some(match res {
+            Ok((md, t)) => {
+                let mut body = format!(
+                    "{} 段，音訊 {:.1} 分，耗時 {:.1} 分\n{}",
+                    t.segments.len(),
+                    t.audio_seconds / 60.0,
+                    t.elapsed_seconds / 60.0,
+                    md.display()
+                );
+                if !t.failed_chunks.is_empty() {
+                    body.push_str(&format!("\n有 {} 段失敗，可在「最近 5 場」裡重跑。", t.failed_chunks.len()));
+                }
+                ("逐字稿完成".into(), body, Some(dir))
+            }
+            Err(e) => ("逐字稿失敗".into(), format!("{e:#}"), None),
+        });
+    });
+    true
+}
+
+/// 在背景執行緒產生會議紀錄草稿；已有工作在跑就回傳 false
+pub fn spawn_minutes(job: Arc<std::sync::Mutex<Job>>, dir: PathBuf, cfg: Config) -> bool {
+    {
+        let mut j = job.lock().unwrap();
+        if j.running.is_some() {
+            return false;
+        }
+        j.running = Some("會議紀錄草稿".into());
+        j.progress = "Gemini 處理中".into();
+    }
+    std::thread::spawn(move || {
+        let res = minutes(&dir, &cfg);
+        let mut j = job.lock().unwrap();
+        j.running = None;
+        j.notice = Some(match res {
+            Ok((p, missing)) => {
+                let extra = if missing > 0 { format!("\n有 {missing} 條沒有時間碼，已列在草稿最後，請刪除或補依據。") } else { String::new() };
+                ("會議紀錄草稿完成".into(), format!("{}{extra}", p.display()), Some(dir))
+            }
+            Err(e) => ("會議紀錄草稿失敗".into(), format!("{e:#}"), None),
+        });
+    });
+    true
+}
+
+/// 這一場上次的 Gemini 逐字稿有沒有失敗段落
+pub fn has_failed_chunks(dir: &Path) -> bool {
+    std::fs::read(dir.join("transcript.gemini.json"))
+        .ok()
+        .and_then(|b| serde_json::from_slice::<Transcript>(&b).ok())
+        .is_some_and(|t| !t.failed_chunks.is_empty())
+}
+
+/// 啟動時找出上次沒有正常結束的場次，標成 failed 後回傳（讓 UI 提示使用者檢查）
+pub fn mark_unfinished(root: &Path) -> Vec<PathBuf> {
+    let v = session::find_unfinished(root);
+    for d in &v {
+        if let Ok(mut s) = session::Session::load(d) {
+            s.status = session::Status::Failed;
+            s.error = Some("上次錄影沒有正常結束（App 當掉或被強制結束）；已錄到的 fragment 仍可播放".into());
+            let _ = s.save(d);
+        }
+    }
     v
 }

@@ -369,3 +369,17 @@ OBS 的基準要用和錄現有檔案相同的 OBS 設定來量，數字記回�
 - M4／M5：實際呼叫 Gemini（需要付費專案的 API key；測試音檔用 `say` 自製，不用真實會議）。
 - M6：OBS 基準與第 9 節指標。
 - 固定簽章：目前是 ad-hoc 簽章，每次重編都要重新授權螢幕錄影。
+- Windows 版全部功能實機驗證（見第 15 節）。
+
+## 15. Windows 版（v0.2 新增）
+
+| 項目 | 做法 | 驗證狀態 |
+|---|---|---|
+| 畫面 | `windows-capture` 2.0.1（Windows.Graphics.Capture），BGRA 由 CPU 雙線性縮放到輸出尺寸；畫面靜止時每 5 秒補寫最後一張 | 型別檢查通過（`cargo check --target x86_64-pc-windows-msvc`）；實機未測 |
+| 聲音 | `wasapi` 0.27：系統聲音用 render 裝置 loopback，麥克風用 capture 裝置；共用模式 autoconvert 成 48 kHz 16-bit；loopback 無聲時補靜音 | 同上 |
+| 寫檔 | Media Foundation SinkWriter，`MFTranscodeContainerType_FMPEG4`（fragmented MP4），硬體編碼優先；關鍵影格間隔 = fragment 秒數 | 同上；`kill` 後可播放未測 |
+| 16 kHz 音訊 | SourceReader 要求 PCM 16 kHz 單聲道，各音軌依時間戳對齊後相加 | 同上 |
+| UI | `tray-icon` 0.26 系統匣＋右鍵選單；對話框用 MessageBox；不提供會議名稱輸入（預設用時間）；Gemini key 用命令列設定 | 同上 |
+| API key | Windows 認證管理員（一般認證 `MeetingRecorder:gemini-api-key`） | 同上 |
+| 封裝 | MSIX（`scripts/package-msix.ps1`）：full trust＋app execution alias；可自簽側載，或用 Partner Center 身分上架 Microsoft Store | GitHub Actions `windows-latest` 實際編譯與封裝 |
+| 本機逐字稿 | whisper.cpp CPU 版（無 Metal）；速度未量 | 未測 |

@@ -1,4 +1,5 @@
-//! ~/Library/Application Support/MeetingRecorder/config.toml（API key 不放這裡，放 Keychain）。
+//! <app_support>/config.toml（macOS：~/Library/Application Support/MeetingRecorder；Windows：%APPDATA%\MeetingRecorder）。
+//! API key 不放這裡：macOS 放 Keychain，Windows 放認證管理員。
 
 use std::path::PathBuf;
 
@@ -6,7 +7,7 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
 use crate::transcript::app_support;
-use crate::writer::Codec;
+use crate::common::Codec;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(default)]
@@ -101,7 +102,7 @@ impl Default for Encode {
 }
 impl Default for Output {
     fn default() -> Self {
-        Self { root: "~/Movies/MeetingRecorder".into() }
+        Self { root: crate::common::DEFAULT_OUTPUT_ROOT.into() }
     }
 }
 impl Default for Local {
@@ -121,7 +122,7 @@ pub fn path() -> PathBuf {
 
 pub fn expand(p: &str) -> PathBuf {
     match p.strip_prefix("~/") {
-        Some(rest) => PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(rest),
+        Some(rest) => crate::common::home_dir().join(rest),
         None => PathBuf::from(p),
     }
 }

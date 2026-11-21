@@ -23,12 +23,7 @@ use objc2_foundation::{NSDictionary, NSNumber, NSString, NSURL};
 
 const K_AUDIO_FORMAT_MPEG4_AAC: u32 = u32::from_be_bytes(*b"aac ");
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Codec {
-    Hevc,
-    H264,
-}
+pub use crate::common::Codec;
 
 #[derive(Clone, Debug)]
 pub struct WriterConfig {

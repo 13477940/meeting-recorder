@@ -1,0 +1,65 @@
+# 每次 push／PR：macOS 跑測試並包 .app；Windows 跑測試並包 MSIX（測試用自簽）。
+# 推 v* tag 時另外建立 GitHub Release 並附上兩個平台的安裝檔。
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  macos:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v7
+      - name: 安裝 rust-toolchain.toml 指定的 Rust
+        run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --release
+      - run: ./scripts/bundle.sh
+      - uses: actions/upload-artifact@v7
+        with:
+          name: MeetingRecorder-macos
+          path: dist/MeetingRecorder-macos.zip
+
+  windows:
+    runs-on: windows-latest
+    env:
+      # whisper-rs-sys 的 bindgen 需要 libclang（runner 內建 LLVM）
+      LIBCLANG_PATH: C:\Program Files\LLVM\bin
+    steps:
+      - uses: actions/checkout@v7
+      - name: 安裝 rust-toolchain.toml 指定的 Rust
+        run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --release
+      - name: 封裝 MSIX（測試用自簽憑證）
+        shell: pwsh
+        run: ./scripts/package-msix.ps1 -SelfSign
+      - uses: actions/upload-artifact@v7
+        with:
+          name: MeetingRecorder-windows
+          path: |
+            dist/*.msix
+            dist/*.cer
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [macos, windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v3
+        with:
+          files: artifacts/*
+          generate_release_notes: true

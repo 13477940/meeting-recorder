@@ -1,16 +1,27 @@
-mod app;
+// Windows：沒有參數時是系統匣 App，不要跳出主控台視窗；有參數（命令列）時接回啟動它的主控台
+#![cfg_attr(windows, windows_subsystem = "windows")]
+
 mod audio;
+mod common;
 mod config;
 mod disk;
 mod gemini;
 mod jobs;
-mod keychain;
 mod models;
 mod local_asr;
-mod recorder;
 mod session;
 mod transcript;
-mod writer;
+
+#[cfg(target_os = "macos")]
+mod mac;
+#[cfg(target_os = "macos")]
+use mac as platform;
+#[cfg(windows)]
+mod win;
+#[cfg(windows)]
+use win as platform;
+
+use platform::{app, keychain, recorder};
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -19,8 +30,8 @@ use std::time::Duration;
 
 use anyhow::{Result, anyhow, bail};
 
-use recorder::{RecordOptions, Recording, Target};
-use writer::Codec;
+use common::{Codec, RecordOptions, Target};
+use recorder::Recording;
 
 const USAGE: &str = "\
 meeting-recorder — 會議錄影、錄音與逐字稿
@@ -54,6 +65,11 @@ meeting-recorder — 會議錄影、錄音與逐字稿
 ";
 
 fn main() {
+    #[cfg(windows)]
+    if std::env::args().len() > 1 {
+        use windows::Win32::System::Console::{ATTACH_PARENT_PROCESS, AttachConsole};
+        let _ = unsafe { AttachConsole(ATTACH_PARENT_PROCESS) };
+    }
     if let Err(e) = run() {
         eprintln!("錯誤：{e:#}");
         std::process::exit(1);

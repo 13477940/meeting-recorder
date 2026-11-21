@@ -2,13 +2,13 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Instant;
+use std::sync::atomic::AtomicBool;
 
 use anyhow::{Result, anyhow, bail};
+#[cfg(feature = "local-asr")]
 use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters, WhisperVadParams};
 
-use crate::transcript::{PostProcess, Segment, Transcript, app_support, load_glossary};
+use crate::transcript::{Transcript, app_support};
 
 pub struct ModelInfo {
     pub name: &'static str,
@@ -60,6 +60,7 @@ pub fn model_path(name: &str) -> Result<PathBuf> {
     Ok(p)
 }
 
+#[cfg(feature = "local-asr")]
 /// whisper 的 initial prompt 有長度上限（約 224 token），中文一字約 1～2 token，取前面的詞到約 120 字。
 fn build_prompt(glossary: &[String]) -> String {
     let mut s = String::from("以下是臺灣的會議逐字稿，使用繁體中文。");
@@ -80,6 +81,12 @@ fn build_prompt(glossary: &[String]) -> String {
     s
 }
 
+#[cfg(not(feature = "local-asr"))]
+pub fn transcribe(_wav: &Path, _model: &str, _vad: bool, _cancel: Arc<AtomicBool>, _progress: impl FnMut(i32) + 'static) -> Result<Transcript> {
+    bail!("這個版本編譯時沒有開啟本機辨識（feature local-asr）")
+}
+
+#[cfg(feature = "local-asr")]
 pub fn transcribe(
     wav: &Path,
     model_name: &str,
@@ -87,10 +94,12 @@ pub fn transcribe(
     cancel: Arc<AtomicBool>,
     mut progress: impl FnMut(i32) + 'static,
 ) -> Result<Transcript> {
+    use crate::transcript::{PostProcess, Segment, load_glossary};
+    use std::sync::atomic::Ordering;
     let samples = crate::audio::read_wav_f32(wav)?;
     let audio_seconds = samples.len() as f64 / crate::audio::SAMPLE_RATE as f64;
     let mpath = model_path(model_name)?;
-    let started = Instant::now();
+    let started = std::time::Instant::now();
 
     let mut cp = WhisperContextParameters::default();
     cp.use_gpu(true).flash_attn(true);

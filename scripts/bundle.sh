@@ -11,8 +11,12 @@ APP=dist/MeetingRecorder.app
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp target/release/meeting-recorder "$APP/Contents/MacOS/"
+cp packaging/icons/AppIcon.icns "$APP/Contents/Resources/"
+cp LICENSE "$APP/Contents/Resources/"
 sed "s/__VERSION__/$VERSION/g" packaging/Info.plist > "$APP/Contents/Info.plist"
 codesign --force --options runtime --entitlements packaging/entitlements.plist \
   --sign "${SIGN_IDENTITY:--}" "$APP"
 codesign --verify --verbose=2 "$APP"
+# 打包成 zip 方便下載（保留簽章與屬性）
+( cd dist && rm -f MeetingRecorder-macos.zip && ditto -c -k --keepParent MeetingRecorder.app MeetingRecorder-macos.zip )
 echo "完成：${APP}（版本 ${VERSION}，簽章：${SIGN_IDENTITY:-ad-hoc}）"

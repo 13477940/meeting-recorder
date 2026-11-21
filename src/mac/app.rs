@@ -2,7 +2,7 @@
 
 use std::cell::RefCell;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 
 use block2::RcBlock;
@@ -18,23 +18,14 @@ use objc2_foundation::{NSObject, NSObjectProtocol, NSPoint, NSRect, NSSize, NSSt
 use screencapturekit::prelude::AudioInputDevice;
 
 use crate::config::Config;
-use crate::jobs::{self, Engine};
-use crate::recorder::{RecordOptions, Recording, Target};
+use crate::jobs::{self, Engine, Job};
+use crate::common::{RecordOptions, Target};
+use crate::recorder::Recording;
 use crate::session::{Session, Status};
-use crate::writer::Codec;
+use crate::common::Codec;
 
 const SCREEN_PRIVACY_URL: &str = "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture";
 const MIC_PRIVACY_URL: &str = "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone";
-
-#[derive(Default)]
-struct Job {
-    /// 正在做什麼（None = 沒有工作）
-    running: Option<String>,
-    progress: String,
-    /// 工作結束後要跳出的訊息（title, body, 要開的資料夾）
-    notice: Option<(String, String, Option<PathBuf>)>,
-    cancel: Arc<AtomicBool>,
-}
 
 pub struct Ivars {
     cfg: RefCell<Config>,
@@ -288,15 +279,7 @@ fn open_url(u: &str) {
     }
 }
 
-fn open_path(p: &std::path::Path) {
-    if let Some(url) = NSURL::from_file_path(p) {
-        NSWorkspace::sharedWorkspace().openURL(&url);
-    }
-}
-
-fn open_in_textedit(p: &std::path::Path) {
-    let _ = std::process::Command::new("open").arg("-e").arg(p).status();
-}
+use crate::common::{open_path, open_text as open_in_textedit};
 
 fn hms(d: std::time::Duration) -> String {
     let t = d.as_secs();
@@ -445,7 +428,7 @@ impl Controller {
         }
         for (i, d) in recent.iter().enumerate() {
             let s = Session::load(d).ok();
-            let mut label = crate::recorder::dir_name(d);
+            let mut label = crate::common::dir_name(d);
             if let Some(s) = &s {
                 if s.status == Status::Failed {
                     label.push_str("（未正常結束）");
@@ -465,10 +448,7 @@ impl Controller {
             self.add(&sub, "開啟資料夾", Some(sel!(openSession:)), i, false, true);
             self.add(&sub, "產生逐字稿（本機）", Some(sel!(transcribeLocal:)), i, false, !busy && !recording_this && rec.is_none());
             self.add(&sub, "產生逐字稿（Gemini，上傳）", Some(sel!(transcribeGemini:)), i, false, !busy && !recording_this);
-            let has_failed = std::fs::read(d.join("transcript.gemini.json"))
-                .ok()
-                .and_then(|b| serde_json::from_slice::<crate::transcript::Transcript>(&b).ok())
-                .is_some_and(|t| !t.failed_chunks.is_empty());
+            let has_failed = jobs::has_failed_chunks(d);
             if has_failed {
                 self.add(&sub, "重跑 Gemini 失敗段落", Some(sel!(retryGemini:)), i, false, !busy);
             }
@@ -628,79 +608,20 @@ impl Controller {
 
     fn spawn_transcribe(&self, dir: PathBuf, engine: Engine, retry: bool) {
         let cfg = self.ivars().cfg.borrow().clone();
-        let job = self.ivars().job.clone();
-        let cancel = Arc::new(AtomicBool::new(false));
-        {
-            let mut j = job.lock().unwrap();
-            if j.running.is_some() {
-                return;
-            }
-            j.running = Some(format!("{}逐字稿", if engine == Engine::Local { "本機" } else { "Gemini " }));
-            j.progress = "準備中".into();
-            j.cancel = cancel.clone();
-        }
-        std::thread::spawn(move || {
-            let j2 = job.clone();
-            let res = jobs::transcribe(&dir, None, engine, retry, &cfg, cancel, move |p| {
-                j2.lock().unwrap().progress = p;
-            });
-            let mut j = job.lock().unwrap();
-            j.running = None;
-            j.notice = Some(match res {
-                Ok((md, t)) => {
-                    let mut body = format!(
-                        "{} 段，音訊 {:.1} 分，耗時 {:.1} 分\n{}",
-                        t.segments.len(),
-                        t.audio_seconds / 60.0,
-                        t.elapsed_seconds / 60.0,
-                        md.display()
-                    );
-                    if !t.failed_chunks.is_empty() {
-                        body.push_str(&format!("\n有 {} 段失敗，可在「最近 5 場」裡重跑。", t.failed_chunks.len()));
-                    }
-                    ("逐字稿完成".into(), body, Some(dir))
-                }
-                Err(e) => ("逐字稿失敗".into(), format!("{e:#}"), None),
-            });
-        });
+        jobs::spawn_transcribe(self.ivars().job.clone(), dir, engine, retry, cfg);
         self.refresh_title();
     }
 
     fn spawn_minutes(&self, dir: PathBuf) {
         let cfg = self.ivars().cfg.borrow().clone();
-        let job = self.ivars().job.clone();
-        {
-            let mut j = job.lock().unwrap();
-            if j.running.is_some() {
-                return;
-            }
-            j.running = Some("會議紀錄草稿".into());
-            j.progress = "Gemini 處理中".into();
-        }
-        std::thread::spawn(move || {
-            let res = jobs::minutes(&dir, &cfg);
-            let mut j = job.lock().unwrap();
-            j.running = None;
-            j.notice = Some(match res {
-                Ok((p, missing)) => {
-                    let extra = if missing > 0 { format!("\n有 {missing} 條沒有時間碼，已列在草稿最後，請刪除或補依據。") } else { String::new() };
-                    ("會議紀錄草稿完成".into(), format!("{}{extra}", p.display()), Some(dir))
-                }
-                Err(e) => ("會議紀錄草稿失敗".into(), format!("{e:#}"), None),
-            });
-        });
+        jobs::spawn_minutes(self.ivars().job.clone(), dir, cfg);
         self.refresh_title();
     }
 
     /// 啟動時檢查上一場是否沒有正常結束（App 當掉、強制結束）
     fn check_unfinished(&self) {
         let root = self.ivars().cfg.borrow().output_root();
-        for d in crate::session::find_unfinished(&root) {
-            if let Ok(mut s) = Session::load(&d) {
-                s.status = Status::Failed;
-                s.error = Some("上次錄影沒有正常結束（App 當掉或被強制結束）；已錄到的 fragment 仍可播放".into());
-                let _ = s.save(&d);
-            }
+        for d in jobs::mark_unfinished(&root) {
             if self.confirm(
                 "上一場錄影沒有正常結束",
                 &format!("{}\n\n錄影檔以 10 秒為單位分段寫入，已錄的部分通常仍可播放（最多少最後一段）。請開啟檢查。", d.display()),

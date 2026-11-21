@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 由 scripts/package-msix.ps1 填入 __NAME__／__PUBLISHER__／__PUBLISHER_DISPLAY__／__VERSION__／__ARCH__。
+     上架 Microsoft Store 時，Name 與 Publisher 要改成 Partner Center「產品身分識別」頁上的值。 -->
+<Package
+  xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+  xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  xmlns:uap3="http://schemas.microsoft.com/appx/manifest/uap/windows10/3"
+  xmlns:desktop="http://schemas.microsoft.com/appx/manifest/desktop/windows10"
+  xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+  IgnorableNamespaces="uap uap3 desktop rescap">
+
+  <Identity Name="__NAME__" Publisher="__PUBLISHER__" Version="__VERSION__" ProcessorArchitecture="__ARCH__" />
+
+  <Properties>
+    <DisplayName>會議錄影</DisplayName>
+    <PublisherDisplayName>__PUBLISHER_DISPLAY__</PublisherDisplayName>
+    <Logo>Assets\StoreLogo.png</Logo>
+    <Description>低資源的會議畫面錄影、錄音，會後產生繁體中文逐字稿與會議紀錄草稿。</Description>
+  </Properties>
+
+  <Dependencies>
+    <!-- Windows 10 2004 以上：Graphics Capture、fragmented MP4 容器 -->
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.19041.0" MaxVersionTested="10.0.26100.0" />
+  </Dependencies>
+
+  <Resources>
+    <Resource Language="zh-TW" />
+  </Resources>
+
+  <Applications>
+    <Application Id="MeetingRecorder" Executable="meeting-recorder.exe" EntryPoint="Windows.FullTrustApplication">
+      <uap:VisualElements
+        DisplayName="會議錄影"
+        Description="會議錄影與逐字稿"
+        BackgroundColor="transparent"
+        Square150x150Logo="Assets\Square150x150Logo.png"
+        Square44x44Logo="Assets\Square44x44Logo.png" />
+      <Extensions>
+        <!-- 讓終端機可以直接打 meeting-recorder（例如 gemini set-key、transcribe） -->
+        <uap3:Extension Category="windows.appExecutionAlias" Executable="meeting-recorder.exe" EntryPoint="Windows.FullTrustApplication">
+          <uap3:AppExecutionAlias>
+            <desktop:ExecutionAlias Alias="meeting-recorder.exe" />
+          </uap3:AppExecutionAlias>
+        </uap3:Extension>
+      </Extensions>
+    </Application>
+  </Applications>
+
+  <Capabilities>
+    <rescap:Capability Name="runFullTrust" />
+    <DeviceCapability Name="microphone" />
+  </Capabilities>
+</Package>
