@@ -17,7 +17,7 @@
 
 ## 下載
 
-到 [Actions](../../actions) 的最新一次 build 下載 `MeetingRecorder-macos` 或 `MeetingRecorder-windows`；推 `v*` tag 時會自動建立 Release。
+到 [Releases](../../releases) 下載 `MeetingRecorder-macos.zip` 或 `.msix`；每次 push 到 main 會自動發一個預先發行版（`v<版本>-build.<編號>`），推 `v*` tag 則發正式版。
 
 ## 建置
 

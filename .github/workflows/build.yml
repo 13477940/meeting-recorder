@@ -1,5 +1,6 @@
 # 每次 push／PR：macOS 跑測試並包 .app；Windows 跑測試並包 MSIX（測試用自簽）。
-# 推 v* tag 時另外建立 GitHub Release 並附上兩個平台的安裝檔。
+# push 到 main：自動建立預先發行版（tag v<版本>-build.<編號>）並附上兩個平台的安裝檔。
+# 推 v* tag（例如 v0.2.0）：建立正式 Release。PR 只建置、不發佈。
 name: build
 
 on:
@@ -50,17 +51,37 @@ jobs:
             dist/*.cer
 
   release:
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: github.event_name == 'push'
     needs: [macos, windows]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v7
+      - name: 決定 tag
+        id: tag
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            echo "name=$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          else
+            ver=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
+            echo "name=v${ver}-build.${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          fi
       - uses: actions/download-artifact@v8
         with:
           path: artifacts
           merge-multiple: true
       - uses: softprops/action-gh-release@v3
         with:
+          tag_name: ${{ steps.tag.outputs.name }}
+          name: ${{ steps.tag.outputs.name }}
+          target_commitish: ${{ github.sha }}
+          prerelease: ${{ steps.tag.outputs.prerelease }}
           files: artifacts/*
           generate_release_notes: true
+          body: |
+            - macOS：解壓 `MeetingRecorder-macos.zip` 後開啟 `MeetingRecorder.app`（未公證，第一次要在「系統設定 → 隱私權與安全性」允許開啟）。
+            - Windows：先把 `MeetingRecorder-test.cer` 匯入「本機電腦 → 受信任的人」，再雙擊 `.msix` 安裝。
+            - 自動建置版本（build）尚未經實機驗證，僅供測試。
