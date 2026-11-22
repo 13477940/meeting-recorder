@@ -103,6 +103,14 @@ jobs:
       - name: 封裝 MSIX（測試用自簽憑證）
         shell: pwsh
         run: ./scripts/package-msix.ps1 -SelfSign -Arch ${{ matrix.arch }}
+      # Partner Center「產品身分識別」的值（公開資訊，每個 Store 套件都帶著）；不簽章，上傳後由商店簽章
+      - name: 封裝 MSIX（Microsoft Store 上傳用）
+        shell: pwsh
+        run: >-
+          ./scripts/package-msix.ps1 -Arch ${{ matrix.arch }} -OutPrefix MeetingRecorder-store
+          -Name "tom.li.MeetingRecorder"
+          -Publisher "CN=907C6421-2EA7-4F0F-ACC9-A8D7649D2F0B"
+          -PublisherDisplay "tom.li"
       - uses: actions/upload-artifact@v7
         with:
           name: MeetingRecorder-windows-${{ matrix.arch }}
@@ -149,4 +157,5 @@ jobs:
 
             - macOS：解壓後開啟 `MeetingRecorder.app`（未公證，第一次要在「系統設定 → 隱私權與安全性」允許開啟）。
             - Windows：先把 `MeetingRecorder-test-<架構>.cer` 匯入「本機電腦 → 受信任的人」，再雙擊 `.msix` 安裝。
+            - `MeetingRecorder-store_*.msix`：未簽章，只用來上傳 Microsoft Store（Partner Center），不能直接安裝。
             - 自動建置版本（build）尚未經實機驗證，僅供測試。

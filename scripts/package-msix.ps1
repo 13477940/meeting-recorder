@@ -6,14 +6,16 @@
 #   會產生 dist\MeetingRecorder_<版本>_<架構>.msix 與 dist\MeetingRecorder-test-<架構>.cer；
 #   先把 .cer 匯入「本機電腦\受信任的人」，再雙擊 .msix 安裝。
 # 上架 Microsoft Store：
-#   ./scripts/package-msix.ps1 -Name "<Partner Center 的 Package/Identity/Name>" -Publisher "<Package/Identity/Publisher>" -PublisherDisplay "<發行者顯示名稱>"
-#   不簽章，直接把 .msix 上傳到 Partner Center，由商店簽章。
+#   ./scripts/package-msix.ps1 -Name "<Partner Center 的 Package/Identity/Name>" -Publisher "<Package/Identity/Publisher>" -PublisherDisplay "<發行者顯示名稱>" -OutPrefix MeetingRecorder-store
+#   產生 dist\MeetingRecorder-store_<版本>_<架構>.msix，不簽章，直接上傳到 Partner Center，由商店簽章。
 param(
   [string]$Name = "MeetingRecorder",
   [string]$Publisher = "CN=MeetingRecorder Dev",
   [string]$PublisherDisplay = "MeetingRecorder",
   [ValidateSet("x64", "arm64")] [string]$Arch = "x64",
   [switch]$SelfSign,
+  # 輸出檔名前綴；Store 版用不同前綴，避免蓋掉側載測試版
+  [string]$OutPrefix = "MeetingRecorder",
   [switch]$NoLocalAsr
 )
 $ErrorActionPreference = "Stop"
@@ -49,7 +51,7 @@ Copy-Item LICENSE $stage
   Set-Content "$stage\AppxManifest.xml" -Encoding UTF8
 
 New-Item -ItemType Directory -Force -Path dist | Out-Null
-$msix = "dist\MeetingRecorder_${msixVer}_$Arch.msix"
+$msix = "dist\${OutPrefix}_${msixVer}_$Arch.msix"
 & $makeappx pack /o /d $stage /p $msix
 if ($LASTEXITCODE -ne 0) { throw "makeappx 失敗" }
 

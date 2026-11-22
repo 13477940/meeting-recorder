@@ -47,9 +47,9 @@ SIGN_IDENTITY="<憑證名稱>" ./scripts/bundle.sh     # 用固定的程式碼�
 
 ### 上架 Microsoft Store
 
-1. 在 Partner Center 保留 App 名稱，從「產品身分識別」頁取得 `Package/Identity/Name` 與 `Publisher`。
-2. `./scripts/package-msix.ps1 -Name "<Name>" -Publisher "<Publisher>" -PublisherDisplay "<發行者顯示名稱>"`（不加 `-SelfSign`）。
-3. 上傳 `.msix`，由商店簽章。App 使用 `runFullTrust`（受限功能），送審時要說明用途：桌面 App 需要擷取螢幕與系統聲音。
+1. CI 已用 Partner Center「產品身分識別」的值另外產出 `MeetingRecorder-store_<版本>_<架構>.msix`（未簽章，放在 Release）。手動產出：`./scripts/package-msix.ps1 -Name "<Name>" -Publisher "<Publisher>" -PublisherDisplay "<發行者顯示名稱>" -OutPrefix MeetingRecorder-store`（不加 `-SelfSign`）。
+2. 每次送審的版本號必須比上一次高：先改 `Cargo.toml` 的 `version` 再建置。
+3. 在 Partner Center 上傳 x64 與 arm64 兩個 `.msix`，由商店簽章。App 使用 `runFullTrust`（受限功能），送審時要說明用途：桌面 App 需要擷取螢幕與系統聲音。
 
 ## 第一次使用
 
