@@ -284,7 +284,13 @@ fn cmd_transcribe(rest: &[String]) -> Result<()> {
     let cancel = Arc::new(AtomicBool::new(false));
     {
         let c = cancel.clone();
-        ctrlc::set_handler(move || c.store(true, Ordering::SeqCst))?;
+        // 第一次 Ctrl+C：在下一個可中斷點停下（本機辨識、Gemini 段與段之間）；第二次：直接結束
+        ctrlc::set_handler(move || {
+            if c.swap(true, Ordering::SeqCst) {
+                std::process::exit(130);
+            }
+            eprintln!("\n收到 Ctrl+C，處理完目前這一步就停止（再按一次直接結束）");
+        })?;
     }
     let mut last = String::new();
     let (md, t) = jobs::transcribe(&input, out, engine, retry_failed, &cfg, cancel, move |msg| {

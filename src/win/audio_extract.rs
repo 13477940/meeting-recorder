@@ -63,8 +63,13 @@ fn read_track(input: &Path, stream: u32) -> Result<Vec<i16>> {
         unsafe { buf.Lock(&mut p, None, Some(&mut len)) }?;
         let bytes = unsafe { std::slice::from_raw_parts(p, len as usize) };
         let pos = (ts.max(0) as i128 * SAMPLE_RATE as i128 / 10_000_000) as usize;
-        if pos > out.len() {
+        // 依時間戳把樣本放回時間軸：有缺口補靜音、時間重疊就從 pos 覆寫，各音軌才不會越混越錯開。
+        // 10 ms 以內的差距視為時間戳捨入誤差，直接接在後面，避免產生爆音。
+        const JITTER: usize = (SAMPLE_RATE / 100) as usize;
+        if pos > out.len() + JITTER {
             out.resize(pos, 0);
+        } else if pos + JITTER < out.len() {
+            out.truncate(pos);
         }
         out.extend(bytes.chunks_exact(2).map(|c| i16::from_le_bytes([c[0], c[1]])));
         unsafe { buf.Unlock() }?;

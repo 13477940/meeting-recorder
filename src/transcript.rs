@@ -26,6 +26,9 @@ pub struct Transcript {
     /// Gemini 路徑中失敗的段落（起始秒），可單獨重跑
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub failed_chunks: Vec<f64>,
+    /// Gemini 路徑的切段方式（秒）：(段長, 重疊)。重跑失敗段時沿用，避免設定改過後對錯段
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chunk_plan: Option<(f64, f64)>,
 }
 
 pub use crate::common::app_support;
@@ -105,13 +108,29 @@ fn is_cjk(c: char) -> bool {
 
 /// 中文字旁的半形標點改成全形（whisper 常輸出半形逗號、問號）
 pub fn fullwidth_punct(s: &str) -> String {
-    // 刪節號先整組換掉，避免第一個點被轉成句號（「。..」）
-    let s = s.replace("。。。", "……").replace("...", "……");
     let chars: Vec<char> = s.chars().collect();
     let mut out = String::with_capacity(s.len());
-    for (i, &c) in chars.iter().enumerate() {
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
         let prev_cjk = i > 0 && is_cjk(chars[i - 1]);
+        // 連續兩個以上的「.」「。」是刪節號：整組換成「……」，不要逐一轉成句號（「。..」）。
+        // 只有半形點時，要旁邊是中文才換，英文的 "wait..." 保持原樣。
+        if c == '.' || c == '。' {
+            let mut j = i;
+            while j < chars.len() && (chars[j] == '.' || chars[j] == '。') {
+                j += 1;
+            }
+            let next_cjk = chars.get(j).is_some_and(|&n| is_cjk(n));
+            let has_full = chars[i..j].contains(&'。');
+            if j - i >= 2 && (has_full || prev_cjk || next_cjk) {
+                out.push_str("……");
+                i = j;
+                continue;
+            }
+        }
         let next_cjk = chars.get(i + 1).is_some_and(|&n| is_cjk(n));
+        i += 1;
         let full = match c {
             ',' => Some('，'),
             '?' => Some('？'),
@@ -139,7 +158,12 @@ mod tests {
         assert_eq!(fullwidth_punct("APP這邊.結束"), "APP這邊。結束");
         assert_eq!(fullwidth_punct("好啊..."), "好啊……");
         assert_eq!(fullwidth_punct("個人描述是。。。"), "個人描述是……");
-        assert_eq!(fullwidth_punct("wait..."), "wait……");
+        assert_eq!(fullwidth_punct("好啊...."), "好啊……");
+        assert_eq!(fullwidth_punct("好啊.."), "好啊……");
+        assert_eq!(fullwidth_punct("...然後"), "……然後");
+        assert_eq!(fullwidth_punct("wait..."), "wait...");
+        assert_eq!(fullwidth_punct("Loading... 完成"), "Loading... 完成");
+        assert_eq!(fullwidth_punct("8.4.2吧"), "8.4.2吧");
     }
 }
 

@@ -87,7 +87,10 @@ impl App {
         let add = |i: &dyn IsMenuItem| {
             let _ = menu.append(i);
         };
-        let busy = self.job.lock().unwrap().running.clone();
+        let (busy, cancellable) = {
+            let j = self.job.lock().unwrap();
+            (j.running.clone(), j.cancellable)
+        };
         match &self.rec {
             None => item(&add, "start", "開始錄影（名稱用目前時間）", true),
             Some(r) => {
@@ -97,7 +100,9 @@ impl App {
         }
         if let Some(what) = &busy {
             item(&add, "-", &format!("處理中：{what}"), false);
-            item(&add, "cancel", "取消處理", true);
+            if cancellable {
+                item(&add, "cancel", "取消處理", true);
+            }
         }
         add(&PredefinedMenuItem::separator());
 

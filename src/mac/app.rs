@@ -416,7 +416,9 @@ impl Controller {
         }
         if let Some(what) = &job.running {
             self.add(menu, &format!("處理中：{what}（{}）", job.progress), None, 0, false, false);
-            self.add(menu, "取消處理", Some(sel!(cancelJob:)), 0, false, true);
+            if job.cancellable {
+                self.add(menu, "取消處理", Some(sel!(cancelJob:)), 0, false, true);
+            }
         }
         menu.addItem(&NSMenuItem::separatorItem(mtm));
 

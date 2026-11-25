@@ -2,7 +2,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use anyhow::{Result, anyhow, bail};
 
@@ -50,6 +50,10 @@ pub fn transcribe(
         (progress.lock().unwrap())("取出音訊".into());
         audio::extract_16k(&media, &wav)?;
     }
+    // 取音訊本身無法中斷（通常幾秒），結束後再檢查一次
+    if cancel.load(Ordering::Relaxed) {
+        bail!("已取消");
+    }
     let t = match engine {
         Engine::Local => {
             let p = progress.clone();
@@ -69,7 +73,7 @@ pub fn transcribe(
                 None
             };
             let p = progress.clone();
-            g.transcribe(&wav, cfg.transcribe.gemini.chunk_minutes, cfg.transcribe.gemini.overlap_seconds, prev.as_ref(), move |i, n| {
+            g.transcribe(&wav, cfg.transcribe.gemini.chunk_minutes, cfg.transcribe.gemini.overlap_seconds, prev.as_ref(), &cancel, move |i, n| {
                 (p.lock().unwrap())(format!("Gemini 第 {i}/{n} 段"))
             })?
         }
@@ -120,6 +124,8 @@ pub struct Job {
     /// 工作結束後要顯示的訊息：(標題, 內容, 要開的資料夾)
     pub notice: Option<(String, String, Option<PathBuf>)>,
     pub cancel: Arc<AtomicBool>,
+    /// 這件工作能不能取消（會議紀錄草稿是單一請求，不能）
+    pub cancellable: bool,
 }
 
 /// 在背景執行緒產生逐字稿；已有工作在跑就回傳 false
@@ -133,9 +139,11 @@ pub fn spawn_transcribe(job: Arc<std::sync::Mutex<Job>>, dir: PathBuf, engine: E
         j.running = Some(format!("{}逐字稿", if engine == Engine::Local { "本機" } else { "Gemini " }));
         j.progress = "準備中".into();
         j.cancel = cancel.clone();
+        j.cancellable = true;
     }
     std::thread::spawn(move || {
         let j2 = job.clone();
+        let cancelled = cancel.clone();
         let res = transcribe(&dir, None, engine, retry, &cfg, cancel, move |p| {
             j2.lock().unwrap().progress = p;
         });
@@ -155,6 +163,7 @@ pub fn spawn_transcribe(job: Arc<std::sync::Mutex<Job>>, dir: PathBuf, engine: E
                 }
                 ("逐字稿完成".into(), body, Some(dir))
             }
+            Err(_) if cancelled.load(Ordering::Relaxed) => ("逐字稿已取消".into(), "已停止處理。".into(), None),
             Err(e) => ("逐字稿失敗".into(), format!("{e:#}"), None),
         });
     });
@@ -170,6 +179,7 @@ pub fn spawn_minutes(job: Arc<std::sync::Mutex<Job>>, dir: PathBuf, cfg: Config)
         }
         j.running = Some("會議紀錄草稿".into());
         j.progress = "Gemini 處理中".into();
+        j.cancellable = false;
     }
     std::thread::spawn(move || {
         let res = minutes(&dir, &cfg);

@@ -123,7 +123,23 @@ pub fn transcribe(
         p.enable_vad(true);
         p.set_vad_params(WhisperVadParams::default());
     }
-    p.set_progress_callback_safe(move |pct: i32| progress(pct));
+    // 不用 set_progress_callback_safe：它用 Box::into_raw 交出閉包後永遠不釋放，每跑一次就洩漏一份
+    //（連同閉包抓住的 Arc<Mutex<Job>>）。改成閉包留在這個函式的堆疊上，C 端只拿指標。
+    unsafe extern "C" fn progress_cb(
+        _ctx: *mut whisper_rs::WhisperSysContext,
+        _state: *mut whisper_rs::WhisperSysState,
+        pct: std::os::raw::c_int,
+        data: *mut std::ffi::c_void,
+    ) {
+        let f = unsafe { &mut *(data as *mut &mut dyn FnMut(i32)) };
+        f(pct);
+    }
+    let mut progress_dyn: &mut dyn FnMut(i32) = &mut progress;
+    // SAFETY: progress_dyn 在 state.full 回傳前都還在這個堆疊框裡
+    unsafe {
+        p.set_progress_callback(Some(progress_cb));
+        p.set_progress_callback_user_data(&mut progress_dyn as *mut &mut dyn FnMut(i32) as *mut std::ffi::c_void);
+    }
     // 不用 whisper-rs 0.16 的 set_abort_callback_safe：它的 trampoline 把 Box<dyn FnMut> 當成閉包本身解讀，
     // 會讀到錯誤的記憶體而隨機回傳 true，造成「failed to encode」。改成直接把 AtomicBool 的指標交給 C 端。
     unsafe extern "C" fn abort_cb(data: *mut std::ffi::c_void) -> bool {
@@ -165,5 +181,6 @@ pub fn transcribe(
         elapsed_seconds: started.elapsed().as_secs_f64(),
         segments,
         failed_chunks: vec![],
+        chunk_plan: None,
     })
 }

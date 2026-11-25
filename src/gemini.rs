@@ -3,6 +3,7 @@
 //! → 依段落邊界合併 → 刪除上傳檔。每一場都必須由使用者手動選擇才會上傳。
 
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, anyhow, bail};
@@ -67,6 +68,8 @@ pub struct Chunk {
 }
 
 pub fn plan_chunks(total: f64, chunk: f64, overlap: f64) -> Vec<Chunk> {
+    // chunk 為 0 或負數時 t 不會前進，會無窮迴圈；至少 1 分鐘
+    let chunk = chunk.max(60.0);
     let mut v = Vec::new();
     let mut t = 0.0;
     while t < total {
@@ -77,10 +80,10 @@ pub fn plan_chunks(total: f64, chunk: f64, overlap: f64) -> Vec<Chunk> {
     v
 }
 
-/// 只留下起點落在本段負責範圍內的句子，重疊區的重複句因此只會保留一次
+/// 只留下起點落在本段負責範圍 [keep_from, keep_to) 內的句子；相鄰段的範圍不重疊，重疊區的句子只會保留一次
 pub fn keep_segments(chunk: &Chunk, segs: Vec<Segment>) -> Vec<Segment> {
     segs.into_iter()
-        .filter(|s| s.start >= chunk.keep_from - 0.5 && s.start < chunk.keep_to)
+        .filter(|s| s.start >= chunk.keep_from && s.start < chunk.keep_to)
         .collect()
 }
 
@@ -170,7 +173,8 @@ impl Gemini {
     }
 
     fn generate(&self, parts: Value, schema: Option<Value>) -> Result<String> {
-        let mut gen_cfg = json!({ "temperature": 0 });
+        // 不送 temperature/top_p/top_k：下一代 Gemini 模型收到會回 400（3.6 Flash 起本來就忽略）
+        let mut gen_cfg = json!({});
         if let Some(s) = schema {
             gen_cfg["responseMimeType"] = json!("application/json");
             gen_cfg["responseSchema"] = s;
@@ -233,7 +237,10 @@ impl Gemini {
         // 不論成功與否都刪掉上傳檔，不等 48 小時自然過期
         let del = self.delete(&name);
         let text = result?;
-        del.context("刪除 Gemini 上傳檔失敗")?;
+        if let Err(e) = del {
+            // 結果已經拿到，刪除失敗只警告；Google 48 小時後也會自動刪除
+            eprintln!("警告：刪除 Gemini 上傳檔 {name} 失敗：{e:#}");
+        }
 
         let arr: Vec<Value> = serde_json::from_str(&text).context("Gemini 回傳的不是預期的 JSON")?;
         let mut out = Vec::new();
@@ -258,17 +265,25 @@ impl Gemini {
         chunk_minutes: u32,
         overlap_seconds: u32,
         previous: Option<&Transcript>,
+        cancel: &AtomicBool,
         mut progress: impl FnMut(usize, usize),
     ) -> Result<Transcript> {
         let samples: Vec<i16> = crate::audio::read_wav_f32(wav)?.iter().map(|f| (f * 32768.0) as i16).collect();
         let total = samples.len() as f64 / SAMPLE_RATE as f64;
-        let chunks = plan_chunks(total, chunk_minutes as f64 * 60.0, overlap_seconds as f64);
+        // 重跑失敗段時沿用上次的切段方式，失敗段的起點才對得上
+        let (chunk_s, overlap_s) = previous
+            .and_then(|p| p.chunk_plan)
+            .unwrap_or((chunk_minutes as f64 * 60.0, overlap_seconds as f64));
+        let chunks = plan_chunks(total, chunk_s, overlap_s);
         let glossary = load_glossary();
         let pp = PostProcess::new()?;
         let started = Instant::now();
         let mut segs: Vec<Segment> = Vec::new();
         let mut failed = Vec::new();
         for (i, c) in chunks.iter().enumerate() {
+            if cancel.load(Ordering::Relaxed) {
+                bail!("已取消");
+            }
             progress(i, chunks.len());
             if let Some(p) = previous {
                 if !p.failed_chunks.iter().any(|f| (f - c.keep_from).abs() < 1.0) {
@@ -297,6 +312,7 @@ impl Gemini {
             elapsed_seconds: started.elapsed().as_secs_f64(),
             segments: segs,
             failed_chunks: failed,
+            chunk_plan: Some((chunk_s, overlap_s)),
         })
     }
 
@@ -358,6 +374,19 @@ mod tests {
         assert_eq!(c[0], Chunk { start: 0.0, end: 615.0, keep_from: 0.0, keep_to: 600.0 });
         assert_eq!(c[1], Chunk { start: 585.0, end: 1215.0, keep_from: 600.0, keep_to: 1200.0 });
         assert_eq!(c[2], Chunk { start: 1185.0, end: 1500.0, keep_from: 1200.0, keep_to: 1500.0 });
+    }
+
+    #[test]
+    fn zero_chunk_does_not_loop() {
+        assert_eq!(plan_chunks(300.0, 0.0, 15.0).len(), 5);
+    }
+
+    #[test]
+    fn boundary_sentence_kept_once() {
+        let mk = |s: f64| Segment { start: s, end: s + 2.0, speaker: "A".into(), text: String::new() };
+        let c = plan_chunks(1200.0, 600.0, 15.0);
+        let n = keep_segments(&c[0], vec![mk(599.7)]).len() + keep_segments(&c[1], vec![mk(599.7)]).len();
+        assert_eq!(n, 1);
     }
 
     #[test]
