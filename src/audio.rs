@@ -58,3 +58,50 @@ pub fn read_wav_f32(path: &Path) -> Result<Vec<f32>> {
     }
     bail!("{} 找不到音訊資料", path.display())
 }
+
+/// 依時間戳把一批樣本放回音軌時間軸（Windows 取音訊用；放這裡讓各平台都能跑測試）。
+/// - 有缺口（超過 10 ms）補靜音；
+/// - 小幅重疊（1 秒內）只覆寫新樣本涵蓋的範圍，其餘接在後面，不刪掉已解出的音訊；
+/// - 10 ms 內的差距（時間戳捨入）或大幅倒退（時間戳不連續）直接接在後面。
+#[cfg_attr(not(windows), allow(dead_code))]
+pub fn place_samples(out: &mut Vec<i16>, pos: usize, new: &[i16]) {
+    const JITTER: usize = (SAMPLE_RATE / 100) as usize;
+    if pos > out.len() + JITTER {
+        out.resize(pos, 0);
+        out.extend_from_slice(new);
+    } else if pos + JITTER < out.len() && out.len() - pos <= SAMPLE_RATE as usize {
+        let n = new.len().min(out.len() - pos);
+        out[pos..pos + n].copy_from_slice(&new[..n]);
+        out.extend_from_slice(&new[n..]);
+    } else {
+        out.extend_from_slice(new);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn place_gap_overlap_jitter() {
+        // 缺口：補靜音
+        let mut v = vec![1; 100];
+        place_samples(&mut v, 1000, &[2; 10]);
+        assert_eq!((v.len(), v[999], v[1000]), (1010, 0, 2));
+        // 小幅重疊：只覆寫重疊部分，不刪已有樣本
+        let mut v = vec![1; 1000];
+        place_samples(&mut v, 500, &[2; 100]);
+        assert_eq!((v.len(), v[499], v[500], v[599], v[600]), (1000, 1, 2, 2, 1));
+        let mut v = vec![1; 1000];
+        place_samples(&mut v, 800, &[2; 300]);
+        assert_eq!((v.len(), v[799], v[800], v[1099]), (1100, 1, 2, 2));
+        // 捨入誤差：直接接在後面
+        let mut v = vec![1; 1000];
+        place_samples(&mut v, 995, &[2; 10]);
+        assert_eq!(v.len(), 1010);
+        // 大幅倒退（時間戳不連續）：不覆寫開頭，直接接在後面
+        let mut v = vec![1; 100_000];
+        place_samples(&mut v, 0, &[2; 10]);
+        assert_eq!((v.len(), v[0]), (100_010, 1));
+    }
+}

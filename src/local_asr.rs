@@ -132,7 +132,8 @@ pub fn transcribe(
         data: *mut std::ffi::c_void,
     ) {
         let f = unsafe { &mut *(data as *mut &mut dyn FnMut(i32)) };
-        f(pct);
+        // panic 不能穿過 extern "C" 邊界（會直接中止整個程式），在這裡吞掉；進度回報失敗不影響辨識
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(pct)));
     }
     let mut progress_dyn: &mut dyn FnMut(i32) = &mut progress;
     // SAFETY: progress_dyn 在 state.full 回傳前都還在這個堆疊框裡
@@ -153,7 +154,7 @@ pub fn transcribe(
 
     let res = state.full(p, &samples);
     if cancel.load(Ordering::Relaxed) {
-        bail!("已取消");
+        bail!("{}", crate::gemini::CANCELLED);
     }
     res.map_err(|e| anyhow!("辨識失敗：{e:?}"))?;
 

@@ -114,7 +114,10 @@ pub fn fullwidth_punct(s: &str) -> String {
     while i < chars.len() {
         let c = chars[i];
         let prev_cjk = i > 0 && is_cjk(chars[i - 1]);
-        // 連續兩個以上的「.」「。」是刪節號：整組換成「……」，不要逐一轉成句號（「。..」）。
+        // 連續的「.」「。」整組處理，不要逐一轉成句號（「。..」）：
+        // - 三個以上是刪節號 →「……」；
+        // - 兩個半形點也當刪節號（whisper 常輸出「好啊..」）；
+        // - 兩個且含「。」是重複的句號（「好。。」「好。.」）→ 單一「。」。
         // 只有半形點時，要旁邊是中文才換，英文的 "wait..." 保持原樣。
         if c == '.' || c == '。' {
             let mut j = i;
@@ -124,7 +127,7 @@ pub fn fullwidth_punct(s: &str) -> String {
             let next_cjk = chars.get(j).is_some_and(|&n| is_cjk(n));
             let has_full = chars[i..j].contains(&'。');
             if j - i >= 2 && (has_full || prev_cjk || next_cjk) {
-                out.push_str("……");
+                out.push_str(if j - i == 2 && has_full { "。" } else { "……" });
                 i = j;
                 continue;
             }
@@ -160,6 +163,8 @@ mod tests {
         assert_eq!(fullwidth_punct("個人描述是。。。"), "個人描述是……");
         assert_eq!(fullwidth_punct("好啊...."), "好啊……");
         assert_eq!(fullwidth_punct("好啊.."), "好啊……");
+        assert_eq!(fullwidth_punct("我們先這樣。。下一題"), "我們先這樣。下一題");
+        assert_eq!(fullwidth_punct("好啊。.."), "好啊……");
         assert_eq!(fullwidth_punct("...然後"), "……然後");
         assert_eq!(fullwidth_punct("wait..."), "wait...");
         assert_eq!(fullwidth_punct("Loading... 完成"), "Loading... 完成");

@@ -3,6 +3,7 @@
 //! → 依段落邊界合併 → 刪除上傳檔。每一場都必須由使用者手動選擇才會上傳。
 
 use std::path::Path;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
@@ -20,7 +21,12 @@ pub struct Gemini {
     http: Client,
     key: String,
     pub model: String,
+    /// 設為 true 時，在重試等待、檔案處理輪詢與段落之間停下
+    pub cancel: Arc<AtomicBool>,
 }
+
+/// 取消時的錯誤訊息開頭；jobs 用它分辨「取消」和「失敗」
+pub const CANCELLED: &str = "已取消";
 
 fn wav_bytes(samples: &[i16]) -> Vec<u8> {
     let data = (samples.len() * 2) as u32;
@@ -80,18 +86,30 @@ pub fn plan_chunks(total: f64, chunk: f64, overlap: f64) -> Vec<Chunk> {
     v
 }
 
-/// 只留下起點落在本段負責範圍 [keep_from, keep_to) 內的句子；相鄰段的範圍不重疊，重疊區的句子只會保留一次
+/// 只留下起點落在本段負責範圍內的句子。起點往前多容許 0.5 秒：兩段各自判斷的時間戳可能落在交界兩側，
+/// 不容許的話交界的句子可能兩段都不收；多收的重複句由 `dedup_boundary` 去掉。
 pub fn keep_segments(chunk: &Chunk, segs: Vec<Segment>) -> Vec<Segment> {
     segs.into_iter()
-        .filter(|s| s.start >= chunk.keep_from && s.start < chunk.keep_to)
+        .filter(|s| s.start >= chunk.keep_from - 0.5 && s.start < chunk.keep_to)
         .collect()
+}
+
+/// 已依起點排序的句子中，起點相差 1 秒內、內容幾乎相同的只留第一句。
+/// 「一句包含另一句」還要長度差不多（短的至少是長的 80%），避免「好」把緊接的「好，那我們開始」吃掉。
+pub fn dedup_boundary(segs: &mut Vec<Segment>) {
+    segs.dedup_by(|b, a| {
+        let (la, lb) = (a.text.chars().count(), b.text.chars().count());
+        let similar = a.text == b.text
+            || (la.min(lb) * 10 >= la.max(lb) * 8 && (a.text.contains(b.text.as_str()) || b.text.contains(a.text.as_str())));
+        (b.start - a.start).abs() < 1.0 && !a.text.is_empty() && similar
+    });
 }
 
 impl Gemini {
     pub fn new(model: &str) -> Result<Self> {
         let key = crate::keychain::gemini_key()?;
         let http = Client::builder().timeout(Duration::from_secs(600)).build()?;
-        Ok(Self { http, key, model: model.to_string() })
+        Ok(Self { http, key, model: model.to_string(), cancel: Arc::default() })
     }
 
     /// 429／5xx／連線錯誤用指數退避重試，最多 5 次
@@ -112,6 +130,9 @@ impl Gemini {
                 }
                 Err(e) if attempt == MAX_RETRY => return Err(e.into()),
                 Err(_) => {}
+            }
+            if self.cancel.load(Ordering::Relaxed) {
+                bail!("{CANCELLED}");
             }
             std::thread::sleep(wait);
             wait *= 2;
@@ -151,6 +172,10 @@ impl Gemini {
         let mut state = r["file"]["state"].as_str().unwrap_or("ACTIVE").to_string();
         let t = Instant::now();
         while state == "PROCESSING" {
+            if self.cancel.load(Ordering::Relaxed) {
+                let _ = self.delete(&name);
+                bail!("{CANCELLED}");
+            }
             if t.elapsed() > Duration::from_secs(300) {
                 let _ = self.delete(&name);
                 bail!("檔案處理逾時");
@@ -265,7 +290,6 @@ impl Gemini {
         chunk_minutes: u32,
         overlap_seconds: u32,
         previous: Option<&Transcript>,
-        cancel: &AtomicBool,
         mut progress: impl FnMut(usize, usize),
     ) -> Result<Transcript> {
         let samples: Vec<i16> = crate::audio::read_wav_f32(wav)?.iter().map(|f| (f * 32768.0) as i16).collect();
@@ -281,15 +305,17 @@ impl Gemini {
         let mut segs: Vec<Segment> = Vec::new();
         let mut failed = Vec::new();
         for (i, c) in chunks.iter().enumerate() {
-            if cancel.load(Ordering::Relaxed) {
-                bail!("已取消");
-            }
             progress(i, chunks.len());
             if let Some(p) = previous {
                 if !p.failed_chunks.iter().any(|f| (f - c.keep_from).abs() < 1.0) {
                     segs.extend(p.segments.iter().filter(|s| s.start >= c.keep_from && s.start < c.keep_to).cloned());
                     continue;
                 }
+            }
+            // 取消後剩下的段落記成失敗：已完成的段落照樣存檔，之後可用「重跑失敗段」接著做
+            if self.cancel.load(Ordering::Relaxed) {
+                failed.push(c.keep_from);
+                continue;
             }
             match self.transcribe_chunk(&samples, c, segs.last(), &glossary) {
                 Ok(v) => segs.extend(keep_segments(c, v).into_iter().map(|mut s| {
@@ -304,6 +330,7 @@ impl Gemini {
         }
         progress(chunks.len(), chunks.len());
         segs.sort_by(|a, b| a.start.total_cmp(&b.start));
+        dedup_boundary(&mut segs);
         Ok(Transcript {
             engine: "gemini".into(),
             model: self.model.clone(),
@@ -383,10 +410,23 @@ mod tests {
 
     #[test]
     fn boundary_sentence_kept_once() {
-        let mk = |s: f64| Segment { start: s, end: s + 2.0, speaker: "A".into(), text: String::new() };
+        let mk = |s: f64| Segment { start: s, end: s + 2.0, speaker: "A".into(), text: "好，下一題".into() };
         let c = plan_chunks(1200.0, 600.0, 15.0);
-        let n = keep_segments(&c[0], vec![mk(599.7)]).len() + keep_segments(&c[1], vec![mk(599.7)]).len();
-        assert_eq!(n, 1);
+        // 兩段都回報在交界前：只留一句
+        let mut v = [keep_segments(&c[0], vec![mk(599.7)]), keep_segments(&c[1], vec![mk(599.7)])].concat();
+        dedup_boundary(&mut v);
+        assert_eq!(v.len(), 1);
+        // 前段說在交界後、後段說在交界前：仍要收到一句，不能兩段都丟掉
+        let mut v = [keep_segments(&c[0], vec![mk(600.2)]), keep_segments(&c[1], vec![mk(599.8)])].concat();
+        dedup_boundary(&mut v);
+        assert_eq!(v.len(), 1);
+        // 不同句子不能被去重
+        let mut v = vec![
+            Segment { start: 10.0, end: 10.5, speaker: "A".into(), text: "好".into() },
+            Segment { start: 10.6, end: 13.0, speaker: "A".into(), text: "好，那我們開始".into() },
+        ];
+        dedup_boundary(&mut v);
+        assert_eq!(v.len(), 2);
     }
 
     #[test]

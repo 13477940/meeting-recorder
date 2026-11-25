@@ -52,17 +52,18 @@ pub fn transcribe(
     }
     // 取音訊本身無法中斷（通常幾秒），結束後再檢查一次
     if cancel.load(Ordering::Relaxed) {
-        bail!("已取消");
+        bail!("{}", gemini::CANCELLED);
     }
     let t = match engine {
         Engine::Local => {
             let p = progress.clone();
-            local_asr::transcribe(&wav, &cfg.transcribe.local.model, cfg.transcribe.local.vad, cancel, move |pct| {
+            local_asr::transcribe(&wav, &cfg.transcribe.local.model, cfg.transcribe.local.vad, cancel.clone(), move |pct| {
                 (p.lock().unwrap())(format!("本機辨識 {pct}%"))
             })?
         }
         Engine::Gemini => {
-            let g = gemini::Gemini::new(&cfg.transcribe.gemini.model)?;
+            let mut g = gemini::Gemini::new(&cfg.transcribe.gemini.model)?;
+            g.cancel = cancel.clone();
             let prev = if retry_failed {
                 let p: Transcript = serde_json::from_slice(&std::fs::read(dir.join("transcript.gemini.json"))?)?;
                 if p.failed_chunks.is_empty() {
@@ -73,12 +74,16 @@ pub fn transcribe(
                 None
             };
             let p = progress.clone();
-            g.transcribe(&wav, cfg.transcribe.gemini.chunk_minutes, cfg.transcribe.gemini.overlap_seconds, prev.as_ref(), &cancel, move |i, n| {
-                (p.lock().unwrap())(format!("Gemini 第 {i}/{n} 段"))
+            g.transcribe(&wav, cfg.transcribe.gemini.chunk_minutes, cfg.transcribe.gemini.overlap_seconds, prev.as_ref(), move |i, n| {
+                (p.lock().unwrap())(format!("Gemini 第 {}/{n} 段", (i + 1).min(n)))
             })?
         }
     };
     transcript::write_outputs(&dir, &t, &title)?;
+    if engine == Engine::Gemini && cancel.load(Ordering::Relaxed) {
+        // Gemini 取消時已完成的段落已經存檔，剩下的記成失敗段
+        bail!("{}：已完成的段落已存檔，可用「重跑失敗段」（--retry-failed）接著做", gemini::CANCELLED);
+    }
     Ok((dir.join("transcript.md"), t))
 }
 
@@ -163,7 +168,9 @@ pub fn spawn_transcribe(job: Arc<std::sync::Mutex<Job>>, dir: PathBuf, engine: E
                 }
                 ("逐字稿完成".into(), body, Some(dir))
             }
-            Err(_) if cancelled.load(Ordering::Relaxed) => ("逐字稿已取消".into(), "已停止處理。".into(), None),
+            Err(e) if cancelled.load(Ordering::Relaxed) && e.to_string().starts_with(gemini::CANCELLED) => {
+                ("逐字稿已取消".into(), format!("{e:#}"), Some(dir))
+            }
             Err(e) => ("逐字稿失敗".into(), format!("{e:#}"), None),
         });
     });

@@ -287,6 +287,7 @@ fn cmd_transcribe(rest: &[String]) -> Result<()> {
         // 第一次 Ctrl+C：在下一個可中斷點停下（本機辨識、Gemini 段與段之間）；第二次：直接結束
         ctrlc::set_handler(move || {
             if c.swap(true, Ordering::SeqCst) {
+                eprintln!("\n直接結束。若正在用 Gemini，已上傳的這一段音訊來不及刪除，Google 會在 48 小時內自動刪除。");
                 std::process::exit(130);
             }
             eprintln!("\n收到 Ctrl+C，處理完目前這一步就停止（再按一次直接結束）");
