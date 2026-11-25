@@ -124,9 +124,22 @@ pub fn transcribe(
         p.set_vad_params(WhisperVadParams::default());
     }
     p.set_progress_callback_safe(move |pct: i32| progress(pct));
-    p.set_abort_callback_safe(move || cancel.load(Ordering::Relaxed));
+    // 不用 whisper-rs 0.16 的 set_abort_callback_safe：它的 trampoline 把 Box<dyn FnMut> 當成閉包本身解讀，
+    // 會讀到錯誤的記憶體而隨機回傳 true，造成「failed to encode」。改成直接把 AtomicBool 的指標交給 C 端。
+    unsafe extern "C" fn abort_cb(data: *mut std::ffi::c_void) -> bool {
+        unsafe { (*(data as *const std::sync::atomic::AtomicBool)).load(Ordering::Relaxed) }
+    }
+    // SAFETY: cancel（Arc）在 state.full 回傳前都還活著，指標在整個辨識期間有效
+    unsafe {
+        p.set_abort_callback(Some(abort_cb));
+        p.set_abort_callback_user_data(Arc::as_ptr(&cancel) as *mut std::ffi::c_void);
+    }
 
-    state.full(p, &samples).map_err(|e| anyhow!("辨識失敗（或已取消）：{e:?}"))?;
+    let res = state.full(p, &samples);
+    if cancel.load(Ordering::Relaxed) {
+        bail!("已取消");
+    }
+    res.map_err(|e| anyhow!("辨識失敗：{e:?}"))?;
 
     let pp = PostProcess::new()?;
     let mut segments = Vec::new();

@@ -105,6 +105,8 @@ fn is_cjk(c: char) -> bool {
 
 /// 中文字旁的半形標點改成全形（whisper 常輸出半形逗號、問號）
 pub fn fullwidth_punct(s: &str) -> String {
+    // 刪節號先整組換掉，避免第一個點被轉成句號（「。..」）
+    let s = s.replace("。。。", "……").replace("...", "……");
     let chars: Vec<char> = s.chars().collect();
     let mut out = String::with_capacity(s.len());
     for (i, &c) in chars.iter().enumerate() {
@@ -135,6 +137,9 @@ mod tests {
         assert_eq!(fullwidth_punct("好,請說?"), "好，請說？");
         assert_eq!(fullwidth_punct("v1.2, OK"), "v1.2, OK");
         assert_eq!(fullwidth_punct("APP這邊.結束"), "APP這邊。結束");
+        assert_eq!(fullwidth_punct("好啊..."), "好啊……");
+        assert_eq!(fullwidth_punct("個人描述是。。。"), "個人描述是……");
+        assert_eq!(fullwidth_punct("wait..."), "wait……");
     }
 }
 
